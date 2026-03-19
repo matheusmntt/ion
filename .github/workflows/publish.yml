@@ -1,0 +1,55 @@
+name: Ion Publish
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read        # checkout
+      id-token: write       # provenance attestation (npm --provenance)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          # setup-node already writes ~/.npmrc with NODE_AUTH_TOKEN — do NOT
+          # write it again manually, or the two blocks will conflict
+
+      # Deterministic install: respects package-lock.json, faster in CI,
+      # never updates the lock file as a side effect
+      - name: Install dependencies
+        run: npm ci
+
+      # Fail fast on type errors before spending time building
+      - name: Type check
+        run: npm run typecheck
+
+      # Align package.json version with the GitHub release tag (e.g. v1.2.3)
+      # The tag is available as github.ref_name on a release event
+      - name: Sync version from release tag
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"          # strip leading "v" if present
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" package.json
+
+      - name: Build
+        run: npm run build
+
+      # Verify the dist actually exists before trying to publish
+      - name: Verify dist output
+        run: |
+          if [ ! -f dist/index.js ] || [ ! -f dist/index.cjs ] || [ ! -f dist/index.global.js ]; then
+            echo "::error::Expected dist files not found. Build may have failed silently."
+            exit 1
+          fi
+
+      - name: Publish to npm
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
