@@ -1,0 +1,59 @@
+{
+  "name": "@matheusmntt/ion",
+  "version": "1.0.0",
+  "description": "A tiny reactive micro-framework for server-rendered applications",
+  "type": "module",
+  "license": "MIT",
+  "author": {
+    "name": "Matheus Monteiro",
+    "email": "matheusmdev@outlook.com",
+    "url": "https://github.com/matheusmntt"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/matheusmntt/ion"
+  },
+  "homepage": "https://github.com/matheusmntt/ion#readme",
+  "bugs": {
+    "url": "https://github.com/matheusmntt/ion/issues"
+  },
+
+  "main":   "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types":  "./dist/index.d.ts",
+  "browser": "./dist/index.global.js",
+
+  "exports": {
+    ".": {
+      "import":  "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types":   "./dist/index.d.ts"
+    }
+  },
+
+  "files": [
+    "dist"
+  ],
+
+  "scripts": {
+    "build":    "tsup",
+    "dev":      "tsup --watch",
+    "typecheck": "tsc --noEmit"
+  },
+
+  "keywords": [
+    "reactive",
+    "micro-framework",
+    "server-rendered",
+    "php",
+    "progressive-enhancement",
+    "dom-bindings",
+    "vanilla-js",
+    "typescript"
+  ],
+
+  "devDependencies": {
+    "tsup":       "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}

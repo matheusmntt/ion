@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    // ── Output ────────────────────────────────────────────────────────────────
+    "target": "ES2020",           // Alinhado com o target do tsup; suporte amplo em browsers modernos
+    "module": "ESNext",           // Mantém imports estáticos — necessário para tree-shaking do tsup
+    "moduleResolution": "Bundler",// Correto para projetos bundlados com tsup/esbuild
+    "outDir": "dist",
+    "declaration": true,          // Gera .d.ts — necessário para dts: true no tsup
+
+    // ── Type checking ─────────────────────────────────────────────────────────
+    "strict": true,
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+
+    // ── Biblioteca alvo ───────────────────────────────────────────────────────
+    // Inclui apenas APIs de browser — remove tipos de Node.js do ambiente.
+    // Evita que referências acidentais a process/Buffer passem pela checagem.
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+
+    // ── Qualidade ─────────────────────────────────────────────────────────────
+    "noUnusedLocals": true,       // Pega constantes declaradas e nunca usadas (ex: BUILT_IN_ATTRS)
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "exactOptionalPropertyTypes": true
+  },
+  "include": ["src", "index.ts"],
+  "exclude": ["dist", "node_modules", "usage-examples.ts"]
+}
