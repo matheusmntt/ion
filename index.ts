@@ -15,7 +15,7 @@ export type { Store, StoreOptions, ComputedDefinition } from "./src/store"
 // Reactivity primitives
 // ─────────────────────────────────────────────────────────────────────────────
 
-export { effect, batch, deepReactive, schedule } from "./src/reactivity"
+export { effect, batch, deepReactive, schedule, toRaw } from "./src/reactivity"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bindings
