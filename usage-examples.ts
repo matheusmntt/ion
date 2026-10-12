@@ -24,8 +24,10 @@ import {
     console.log("count is", state.count)
   })
 
-  store.state.count++ // → "count is 1"
-  store.state.count++ // → "count is 2"
+  store.state.count++
+  store.state.count++
+  // → um único "count is 2" no próximo microtask: mudanças no mesmo tick
+  //   são deduplicadas, cada subscriber roda uma vez por flush
 
   unsub()
   store.state.count++ // sem log — unsubscribed
@@ -37,11 +39,13 @@ import {
 {
   const store = createStore({ name: "Ana", age: 30 })
 
-  store.onChange((prop, value, state) => {
-    console.log(`prop "${String(prop)}" changed to`, value)
+  // Diferente do subscribe, onChange recebe cada mudança individualmente,
+  // com a chave alterada e o caminho completo a partir da raiz do store
+  store.onChange((prop, value, state, path) => {
+    console.log(`prop "${String(prop)}" (${path.join(".")}) changed to`, value)
   })
 
-  store.state.name = "João" // → prop "name" changed to João
+  store.state.name = "João" // → prop "name" (name) changed to João
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -52,8 +56,8 @@ import {
     user: { name: "Ana", address: { city: "São Paulo" } },
   })
 
-  // Antes: watch('user', cb) não disparava ao mudar user.name
-  // Agora: caminhos profundos funcionam corretamente
+  // O watch rastreia cada chave do caminho: dispara quando a folha muda
+  // ou quando um objeto intermediário é substituído
   store.watch("user.name", (value) => {
     console.log("user.name →", value)
   })
@@ -82,11 +86,13 @@ import {
 
   console.log(store.state.fullName) // "Ana Lima"
   // → recalcula apenas quando firstName ou lastName mudarem
+  //   (as dependências são registradas a cada cálculo)
   // → acessos repetidos retornam o valor cacheado
+  // → effects e bindings que leem fullName re-executam quando ele invalida
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 5. batch — agrupa mutações em uma única notificação
+// 5. batch — muda QUANDO as notificações rodam, não quantas
 // ─────────────────────────────────────────────────────────────────────────────
 {
   const store = createStore({ x: 0, y: 0, z: 0 })
@@ -94,21 +100,21 @@ import {
   let notifyCount = 0
   store.subscribe(() => notifyCount++)
 
-  // Sem batch: 3 notificações
+  // Sem batch: 1 notificação, no próximo microtask (deduplicada)
   store.state.x = 1
   store.state.y = 2
   store.state.z = 3
+  // aqui notifyCount ainda é 0
 
-  notifyCount = 0
-
-  // Com batch: 1 notificação (flush único ao sair do batch)
+  // Com batch: 1 notificação, síncrona, quando o batch externo retorna
   batch(() => {
     store.state.x = 10
     store.state.y = 20
     store.state.z = 30
   })
 
-  // notifyCount === 1 (aproximadamente — depende do scheduler)
+  // notifyCount === 1 logo após o batch (o flush do microtask acima ainda
+  // não rodou se estivermos no mesmo tick)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,11 +131,11 @@ import {
     return () => console.log("cleanup antes do próximo run")
   })
 
-  store.state.count++ // → cleanup... → "count: 1"
-  store.state.name = "João" // sem efeito — não é dep
-  store.state.count++ // → cleanup... → "count: 2"
+  store.state.count++
+  store.state.name = "João" // não é dep — não agenda o effect
+  // → no próximo microtask: cleanup... → "count: 1"
 
-  stop() // desativa o effect permanentemente
+  stop() // desativa o effect (inclusive um re-run já agendado)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -180,11 +186,12 @@ import {
     ],
   })
 
-  // Cada item cria um store escoped com as props do objeto
+  // Cada item cria um store escopado com uma cópia rasa das props do objeto
   // { text, done, $index }
   applyBindings(document.querySelector("ul")!, store)
 
-  // Adicionar item → lista re-renderiza automaticamente
+  // Adicionar item, ou mudar uma prop de um item → a lista inteira
+  // re-renderiza (listas não usam keys)
   store.state.todos = [
     ...store.state.todos,
     { text: "Novo item", done: false },
@@ -198,9 +205,10 @@ import {
   // Plugin que adiciona data-tooltip
   const TooltipPlugin = {
     install(ctx: any) {
+      // O handler recebe o elemento, o valor do atributo, os stores do App
+      // e o store sendo ligado — com ele dá para criar bindings reativos
       ctx.registerBinding("data-tooltip", (el: HTMLElement, expr: string) => {
         el.title = expr
-        // poderia registrar um listener de store para bindings dinâmicos
       })
     },
   }
