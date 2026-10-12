@@ -11,7 +11,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/matheusmntt/ion"
+    "url": "git+https://github.com/matheusmntt/ion.git"
   },
   "homepage": "https://github.com/matheusmntt/ion#readme",
   "bugs": {

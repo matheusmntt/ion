@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read        # checkout
-      id-token: write       # provenance attestation (npm --provenance)
+      id-token: write       # OIDC: npm trusted publishing + provenance attestation
 
     steps:
       - uses: actions/checkout@v4
@@ -18,8 +18,10 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-          # setup-node already writes ~/.npmrc with NODE_AUTH_TOKEN — do NOT
-          # write it again manually, or the two blocks will conflict
+
+      # Trusted publishing (OIDC) requires npm >= 11.5.1; Node 22 ships npm 10
+      - name: Update npm
+        run: npm install -g npm@latest
 
       # Deterministic install: respects package-lock.json, faster in CI,
       # never updates the lock file as a side effect
@@ -52,7 +54,7 @@ jobs:
             exit 1
           fi
 
+      # No token: npm authenticates through the trusted publisher configured
+      # for this repository and workflow on npmjs.com (OIDC, id-token above)
       - name: Publish to npm
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
