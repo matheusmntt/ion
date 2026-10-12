@@ -1,7 +1,7 @@
 import { createStore, Store, StoreOptions } from "./store"
 import { createComponentRegistry } from "./component"
 import { applyBindings } from "./bindings"
-import { effect, batch } from "./reactivity"
+import { effect, batch, EffectOptions } from "./reactivity"
 import {
   State,
   ComponentFactory,
@@ -41,7 +41,7 @@ class AppCore {
       return this.stores[name] as Store<T>
     }
 
-    const store = createStore(initialState, options)
+    const store = createStore(initialState, { ...options, name })
     this.stores[name] = store
     return store
   }
@@ -99,7 +99,7 @@ class AppCore {
    * App.bind(document.querySelector('.form'), store)
    */
   bind<T extends State>(root: HTMLElement, store: Store<T>): Cleanup {
-    return applyBindings(root, store, this.customBindings)
+    return applyBindings(root, store, this.customBindings, this.stores)
   }
 
   // ── Effects ────────────────────────────────────────────────────────────────
@@ -113,14 +113,15 @@ class AppCore {
    * @example
    * App.effect(() => {
    *   document.title = store.state.pageTitle
-   * })
+   * }, { label: 'page-title' })
    */
-  effect(callback: () => void | (() => void)): Cleanup {
-    return effect(callback)
+  effect(callback: () => void | (() => void), options: EffectOptions = {}): Cleanup {
+    return effect(callback, options)
   }
 
   /**
-   * Batches multiple state mutations into a single notification cycle.
+   * Groups mutations so their notifications run synchronously, once per
+   * reaction, when the outermost batch returns.
    *
    * @example
    * App.batch(() => {
@@ -140,7 +141,7 @@ class AppCore {
    * @example
    * App.use({
    *   install(ctx) {
-   *     ctx.registerBinding('data-tooltip', (el, expr, stores) => {
+   *     ctx.registerBinding('data-tooltip', (el, expr, stores, store) => {
    *       el.title = expr
    *     })
    *   }
@@ -194,4 +195,7 @@ declare global {
   }
 }
 
-window.App = App
+// The global is for <script> users; skip it where there is no window (SSR).
+if (typeof window !== "undefined") {
+  window.App = App
+}

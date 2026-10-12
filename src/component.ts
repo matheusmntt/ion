@@ -10,14 +10,6 @@ interface ComponentDefinition {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WeakMap registry
-// Stores cleanup functions keyed by element — no DOM pollution, GC-friendly.
-// ─────────────────────────────────────────────────────────────────────────────
-
-const cleanupMap = new WeakMap<HTMLElement, Cleanup>()
-const instanceMap = new WeakMap<HTMLElement, ComponentInstance>()
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Factory
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -28,8 +20,13 @@ const instanceMap = new WeakMap<HTMLElement, ComponentInstance>()
 export function createComponentRegistry() {
   const definitions: ComponentDefinition[] = []
 
+  // Instances and cleanups are keyed by element in WeakMaps owned by this
+  // registry — no DOM pollution, and registries never see each other's mounts.
+  const cleanupMap = new WeakMap<HTMLElement, Cleanup>()
+  const instanceMap = new WeakMap<HTMLElement, ComponentInstance>()
+
   function mountElement(el: HTMLElement, factory: ComponentFactory): void {
-    // Prevent double-mounting
+    // Prevent double-mounting by this registry
     if (instanceMap.has(el)) return
 
     const instance = factory(el) ?? {}

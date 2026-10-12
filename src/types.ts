@@ -18,13 +18,14 @@ export type State = Record<string, any>
 export type Subscriber<T extends State> = (state: T) => void
 
 /**
- * Full change listener that also receives the changed property and its value.
- * Used internally and by advanced consumers.
+ * Full change listener, called once per change with the changed property (the
+ * leaf key), its new value, the state and the full path from the store root.
  */
 export type ChangeListener<T extends State> = (
   prop: PropertyKey,
   value: unknown,
-  state: T
+  state: T,
+  path: string[]
 ) => void
 
 /**
@@ -76,7 +77,8 @@ export type ComponentFactory = (el: HTMLElement) => ComponentInstance | void
 export interface PluginContext {
   /**
    * Register a custom DOM binding directive.
-   * The handler receives each matching element and the root store map.
+   * The handler receives each matching element, the attribute value, the
+   * stores registered on App, and the store being bound.
    */
   registerBinding(
     attribute: string,
@@ -90,7 +92,8 @@ export interface PluginContext {
 export type BindingHandler = (
   el: HTMLElement,
   expression: string,
-  stores: Record<string, unknown>
+  stores: Record<string, unknown>,
+  store: unknown
 ) => Cleanup | void
 
 /**
