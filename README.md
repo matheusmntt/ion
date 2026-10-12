@@ -14,7 +14,7 @@
 **A tiny reactive micro-framework for server-rendered applications.**
 </div>
 
-Ion adds reactive state to any HTML page — no virtual DOM, no build step required, no framework takeover. Drop it into a PHP, Laravel, or any server-rendered application and get fine-grained reactivity exactly where you need it.
+Ion adds reactive state to any HTML page: no virtual DOM, no build step required, no framework takeover. Drop it into a PHP, Laravel or any other server-rendered application and get fine-grained reactivity exactly where you need it. Each binding tracks the exact state keys it reads and touches the DOM only when its value actually changes.
 
 ```html
 <!-- Your server-rendered HTML stays untouched -->
@@ -23,11 +23,12 @@ Ion adds reactive state to any HTML page — no virtual DOM, no build step requi
   <span data-bind="count"></span>
 </div>
 
-<script src="dist/ion.global.js"></script>
+<script src="https://unpkg.com/@matheusmntt/ion/dist/index.global.js"></script>
 <script>
   const counter = Ion.App.store('counter', { count: 0 })
 
   Ion.App.component('[data-counter]', (el) => {
+    Ion.App.bind(el, counter)
     el.querySelector('button').addEventListener('click', () => {
       counter.state.count++
     })
@@ -49,50 +50,50 @@ Ion adds reactive state to any HTML page — no virtual DOM, no build step requi
   - [Reading State](#reading-state)
   - [Mutating State](#mutating-state)
   - [Subscribing to Changes](#subscribing-to-changes)
-  - [onChange — Full Change Details](#onchange--full-change-details)
+  - [onChange — Every Change](#onchange--every-change)
   - [Watching a Specific Path](#watching-a-specific-path)
   - [Computed Properties](#computed-properties)
 - [DOM Bindings](#dom-bindings)
   - [data-bind — Text](#data-bind--text)
   - [data-show — Visibility](#data-show--visibility)
   - [data-model — Two-Way Input](#data-model--two-way-input)
-  - [data-attr — Attribute](#data-attr--attribute)
+  - [data-attr — Attribute](#data-attr--attribute-binding)
   - [data-class — Class Toggle](#data-class--class-toggle)
   - [data-for — List Rendering](#data-for--list-rendering)
   - [applyBindings — Manual Binding](#applybindings--manual-binding)
 - [Components](#components)
-  - [Registering a Component](#registering-a-component)
-  - [Component Lifecycle](#component-lifecycle)
-  - [Initializing the App](#initializing-the-app)
-  - [Dynamic Mount](#dynamic-mount)
-  - [Destroying Components](#destroying-components)
 - [Reactivity Primitives](#reactivity-primitives)
   - [effect](#effect)
   - [batch](#batch)
+  - [The scheduler](#the-scheduler)
+- [Inspector](#inspector)
 - [Plugin System](#plugin-system)
 - [TypeScript](#typescript)
 - [Using Without a Bundler](#using-without-a-bundler)
 - [Architecture](#architecture)
 - [API Reference](#api-reference)
+- [Development](#development)
 
 ---
 
 ## Why Ion?
 
-Modern frameworks solve complex problems — but most server-rendered apps don't have complex problems. They need a dropdown that opens, a counter that increments, a form that validates in real time.
+Modern frameworks solve complex problems, but most server-rendered apps don't have complex problems. They need a dropdown that opens, a counter that increments, a form that validates in real time.
 
 Ion is the answer to: _"I just need some reactivity on this PHP page."_
 
 | | Ion | Alpine.js | Vue | React |
 |---|---|---|---|---|
-| Bundle (min+gz) | ~3 KB | ~15 KB | ~34 KB | ~45 KB |
+| Bundle (min+gz, approx.) | ~4.4 KB | ~15 KB | ~34 KB | ~45 KB |
 | Virtual DOM | No | No | Yes | Yes |
 | Build step required | No | No | Optional | Yes |
 | Server-rendered friendly | ✓ | ✓ | Partial | Partial |
 | TypeScript-first | ✓ | Partial | ✓ | ✓ |
 | Framework takeover | No | No | Yes | Yes |
 
-Ion focuses on three things: **reactive state**, **declarative bindings**, and **clean component lifecycle**. Nothing more.
+Ion's own figure is measured from `dist/index.js` (gzip -9); the others are rough orientation only.
+
+Ion focuses on three things: **reactive state**, **declarative bindings**, and **explicit component lifecycle**. Nothing more.
 
 ---
 
@@ -108,11 +109,11 @@ npm install @matheusmntt/ion
 
 ```html
 <!-- IIFE — exposes window.Ion -->
-<script src="https://unpkg.com/@matheusmntt/ion/dist/ion.global.js"></script>
+<script src="https://unpkg.com/@matheusmntt/ion/dist/index.global.js"></script>
 
 <!-- ESM -->
 <script type="module">
-  import { App } from 'https://unpkg.com/@matheusmntt/ion/dist/ion.js'
+  import { App } from 'https://unpkg.com/@matheusmntt/ion/dist/index.js'
 </script>
 ```
 
@@ -123,10 +124,12 @@ git clone https://github.com/matheusmntt/ion
 cd ion
 npm install
 npm run build
-# → dist/ion.global.js  (IIFE, for <script src>)
-# → dist/ion.js         (ESM, for <script type="module">)
-# → dist/ion.cjs        (CJS, for require())
+# → dist/index.global.js  (IIFE, for <script src>)
+# → dist/index.js         (ESM, for <script type="module"> and bundlers)
+# → dist/index.cjs        (CJS, for require())
 ```
+
+Importing Ion on the server (SSR, Node scripts) is safe: the `window.App` global is only assigned when a `window` exists.
 
 ---
 
@@ -137,16 +140,16 @@ Ion is built on three primitives. Understanding them is all you need.
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                                                             │
-│   Store ──► holds reactive state                           │
+│   Store ──► holds reactive state (a deep Proxy)             │
 │     │                                                       │
-│     └──► Bindings ──► sync state to DOM automatically      │
+│     └──► Bindings ──► keep the DOM in sync, key by key      │
 │     │                                                       │
-│     └──► Components ──► attach behavior to elements        │
+│     └──► Components ──► attach behavior to elements         │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Stores are the single source of truth. Bindings and components read from them, and mutations propagate automatically.
+Stores are the single source of truth. Bindings, effects and computed values record which keys they read; when one of those keys changes, only they re-run.
 
 ---
 
@@ -174,6 +177,8 @@ The first argument of `App.store` is a name. That name lets you retrieve the sto
 const counter = App.getStore('counter')
 ```
 
+Calling `App.store` again with a name that already exists logs a warning and returns the existing store.
+
 ---
 
 ### Reading State
@@ -184,7 +189,7 @@ Read properties directly from `store.state`:
 console.log(counter.state.count) // 0
 ```
 
-Nested objects are fully reactive:
+Nested plain objects and arrays are fully reactive:
 
 ```js
 const store = App.store('user', {
@@ -202,6 +207,8 @@ console.log(store.state.profile.address.city) // 'São Paulo'
 
 > **Note:** The same nested object always returns the same proxy reference. `store.state.profile === store.state.profile` is always `true`.
 
+Only plain objects and arrays are made reactive. Values such as `Date`, `Map`, `Set` or DOM nodes are stored as-is, so their methods keep working. Replace them to trigger an update.
+
 ---
 
 ### Mutating State
@@ -214,75 +221,74 @@ counter.state.count++
 
 store.state.profile.name = 'João'
 store.state.profile.address.city = 'Curitiba'
+
+store.state.items.push(newItem)   // array methods work too
+delete store.state.flags.legacy   // so does delete
 ```
 
-There is no `setState`, no `commit`, no `dispatch`. Ion uses Proxy internally to intercept mutations and schedule notifications automatically.
+There is no `setState`, no `commit`, no `dispatch`. Ion uses a Proxy to intercept mutations and schedule updates automatically. Assigning the value a key already holds is a no-op.
 
 ---
 
 ### Subscribing to Changes
 
-`subscribe` fires whenever **any** property in the store changes. The callback receives the updated state.
+`subscribe` is store-wide: it fires when **any** property in the store changed. The callback receives the state.
 
 ```js
 const unsubscribe = counter.subscribe((state) => {
   console.log('state changed:', state.count)
 })
 
-counter.state.count++ // → "state changed: 1"
+counter.state.count++
+counter.state.count++
+// → "state changed: 2" (once, in the next microtask)
 
 // Stop listening
 unsubscribe()
 ```
 
-Subscriptions are deduped and batched in microtasks — multiple synchronous mutations in a row produce a single notification per subscriber.
+Subscribers are deduplicated per flush: however many writes happen in the same tick, each subscriber runs once. Prefer bindings, `effect` or `watch` when you only care about specific keys.
 
 ---
 
-### onChange — Full Change Details
+### onChange — Every Change
 
-When you need to know _which_ property changed and its new value, use `onChange`:
+When you need every individual change, use `onChange`. It is called once per change, with the changed key, its new value, the state and the full path from the store root:
 
 ```js
-const unlisten = store.onChange((prop, value, state) => {
-  console.log(`"${String(prop)}" → ${value}`)
+const unlisten = store.onChange((prop, value, state, path) => {
+  console.log(`${path.join('.')} → ${value}`)
 })
 
 store.state.profile.name = 'João'
-// → "name" → João
+// → "profile.name → João"
 
 unlisten()
 ```
 
-Both `subscribe` and `onChange` return a cleanup function. Always call it when you no longer need the subscription to prevent memory leaks.
+Both `subscribe` and `onChange` return a cleanup function. Call it when you no longer need the subscription.
 
 ---
 
 ### Watching a Specific Path
 
-`watch` lets you target a specific property — or a **nested path** using dot notation. The callback only fires when that path's value actually changes.
+`watch` targets a property, or a **nested path** using dot notation. It tracks every key along the path, so it fires when the leaf changes or when an object on the path is replaced:
 
 ```js
-// Top-level property
 counter.watch('count', (value, state) => {
   console.log('count is now', value)
 })
 
-// Nested path — works correctly, unlike naive implementations
 store.watch('profile.name', (value) => {
   document.title = value
 })
 
-store.watch('profile.address.city', (value) => {
-  console.log('city changed to', value)
-})
-
-store.state.profile.name = 'João'         // fires 'profile.name' watcher
-store.state.profile.address.city = 'RJ'  // fires 'profile.address.city' watcher
-store.state.profile.name = 'João'         // does NOT fire — value is the same
+store.state.profile.name = 'João'         // fires 'profile.name'
+store.state.profile = { name: 'Bia' }     // fires 'profile.name' too
+store.state.profile.name = 'Bia'          // does NOT fire — same value
 ```
 
-`watch` uses value diffing: the callback only runs if the resolved value actually changed, preventing spurious updates.
+The callback runs in the flush and only if the value at the path differs (`!==`) from the last value it saw. Changing a value and changing it back within the same tick does not fire.
 
 ```js
 // All watch calls return an unwatch function
@@ -294,7 +300,7 @@ unwatch()
 
 ### Computed Properties
 
-Computed properties are derived values that are **automatically cached** and only recalculated when their dependencies change.
+Computed properties are derived values that are **cached** and recalculated only when one of their own dependencies changes.
 
 ```js
 const store = App.store(
@@ -305,15 +311,15 @@ const store = App.store(
       { name: 'Book',   price: 49.0 },
     ],
     discount: 0.1,
+    note: '',
   },
   {
     computed: {
-      // Simple function form
       total(state) {
         return state.items.reduce((sum, item) => sum + item.price, 0)
       },
 
-      // With discount applied
+      // Computeds can read other computeds
       finalPrice(state) {
         return state.total * (1 - state.discount)
       },
@@ -324,33 +330,35 @@ const store = App.store(
 console.log(store.state.total)      // 61.9
 console.log(store.state.finalPrice) // 55.71
 
-// Accessing .total again → returns cached value (no recalculation)
-console.log(store.state.total) // 61.9 (from cache)
+store.state.note = 'gift'           // unrelated: total stays cached
+store.state.discount = 0.2          // finalPrice is invalidated, total is not
 ```
 
-Computed values are **lazy** (calculated on first read) and **dirty-tracked** (invalidated when a dependency changes). They behave like regular state properties for bindings:
+Computed values are **lazy**: a computed records the keys it reads every time it is evaluated, and is marked dirty when one of them changes. Bindings, effects and watchers that read a computed re-run when it is invalidated, then read the fresh value. They behave like regular state properties for bindings:
 
 ```html
 <span data-bind="total"></span>
 <span data-bind="finalPrice"></span>
 ```
 
+Computed properties are read-only; assigning to one throws.
+
 ---
 
 ## DOM Bindings
 
-Bindings are HTML attributes that connect the DOM to a store. They update automatically whenever the state changes.
+Bindings are HTML attributes that connect the DOM to a store. Each binding is a small reactive effect: it reads its path, records exactly the keys it read, and re-runs only when one of them changes. When it re-runs it compares the new value with what the DOM already holds and skips the write if they are equal.
 
 ---
 
 ### data-bind — Text
 
-Sets the `textContent` of an element to the value at a given path.
+Sets the `textContent` of an element to the value at a given path (`null`/`undefined` become an empty string).
 
 ```html
 <span data-bind="count"></span>
 <span data-bind="user.name"></span>
-<span data-bind="cart.finalPrice"></span>
+<span data-bind="finalPrice"></span>
 ```
 
 ```js
@@ -362,7 +370,7 @@ const store = App.store('ui', {
 App.bind(document.body, store)
 
 store.state.user.name = 'João'
-// → <span>João</span>
+// → <span>João</span>   (the count binding does not run)
 ```
 
 ---
@@ -375,13 +383,9 @@ Toggles `element.hidden` based on the truthiness of the value at the given path.
 <div data-show="isLoggedIn">
   Welcome back!
 </div>
-
-<div data-show="cart.hasItems">
-  Your cart has items.
-</div>
 ```
 
-When the value is falsy, the element is hidden via the native `hidden` attribute. When truthy, `hidden` is removed.
+When the value is falsy, the element is hidden via the native `hidden` attribute. When truthy, `hidden` is removed. CSS that sets `display` on the element overrides `hidden`.
 
 ---
 
@@ -412,18 +416,23 @@ App.bind(document.body, store)
 // store.state.settings.darkMode = true → checkbox becomes checked
 ```
 
-For checkboxes, Ion binds to `.checked`. For all other inputs, it binds to `.value`.
+- Checkboxes bind to `.checked` and write booleans.
+- Everything else binds to `.value` and writes **strings** (convert numbers yourself).
+- `<select>` listens to `change`; other fields listen to `input`.
+- Radio groups and `<select multiple>` are not supported.
+
+Because identical values are never written back, typing in a bound field does not move the caret.
 
 ---
 
 ### data-attr — Attribute Binding
 
-Binds a state value to an HTML attribute. Syntax: `"path:attributeName"`.
+Binds a state value to an HTML attribute. Syntax: `"path:attributeName"` (split on the last colon).
 
 ```html
 <img data-attr="user.avatar:src">
 <a  data-attr="nav.href:href">Dashboard</a>
-<div data-attr="ui.role:aria-label"></div>
+<div data-attr="ui.label:aria-label"></div>
 ```
 
 If the value is `null` or `undefined`, the attribute is **removed** from the element. Otherwise, it is set to `String(value)`.
@@ -432,27 +441,23 @@ If the value is `null` or `undefined`, the attribute is **removed** from the ele
 
 ### data-class — Class Toggle
 
-Conditionally toggles a CSS class. Syntax: `"path:className"`.
+Conditionally toggles a CSS class. Syntax: `"path:className"` (split on the last colon, so class names cannot contain one).
 
 ```html
 <button data-class="ui.isLoading:loading">Submit</button>
 <div    data-class="form.isValid:valid">...</div>
-<li     data-class="item.isActive:active">...</li>
 ```
 
 ```js
 store.state.ui.isLoading = true
 // → <button class="loading">Submit</button>
-
-store.state.ui.isLoading = false
-// → <button>Submit</button>
 ```
 
 ---
 
 ### data-for — List Rendering
 
-Renders a list of elements from an array in the store. The parent element acts as the container; one child with `data-for-item` acts as the template.
+Renders a list of elements from an array in the store. The parent element acts as the container; its direct child with `data-for-item` is the template.
 
 ```html
 <ul data-for="todos">
@@ -474,7 +479,7 @@ const store = App.store('tasks', {
 App.bind(document.body, store)
 ```
 
-Each item in the array is exposed as a scoped store inside the template. The available properties are the item's own properties plus `$index`.
+Each item is rendered with its own scoped store, holding a shallow copy of the item plus `$index` (primitive items are exposed as `$value`).
 
 | Variable | Value |
 |---|---|
@@ -482,9 +487,9 @@ Each item in the array is exposed as a scoped store inside the template. The ava
 | `done` | The item's `done` property |
 | `$index` | The item's position in the array (0-based) |
 
-When `store.state.todos` is reassigned, the list re-renders automatically.
+The list re-renders when the array is replaced, when its length changes, or when a property of an item that it rendered changes. Writes to unrelated keys of the store do not touch it.
 
-> **Note:** `data-for` performs a full re-render on every change. For high-frequency updates on large lists, a component-based approach is preferred.
+> **Limitations:** lists are not keyed — the whole list is rebuilt on every change, so focus inside an item is lost. The container's other children are removed. Writes made through an item's scope (for example `data-model` inside the template) change the copy, not the original array. For interactive or large lists, prefer a component that renders the list itself.
 
 ---
 
@@ -497,7 +502,6 @@ import { applyBindings, createStore } from '@matheusmntt/ion'
 
 const store = createStore({ name: 'Ana', visible: true })
 
-// Apply to a specific root — not necessarily document.body
 const cleanup = applyBindings(
   document.querySelector('#my-widget'),
   store
@@ -507,13 +511,15 @@ const cleanup = applyBindings(
 cleanup()
 ```
 
-`applyBindings` scans the root element and all its descendants for binding attributes, connects them, and sets up a `MutationObserver` to handle elements added to the DOM _after_ the initial scan.
+`applyBindings` scans the root element and its descendants for binding attributes and connects them. It also observes the subtree with a `MutationObserver`: elements added later are bound to the same store, and the bindings of elements removed from the root are stopped.
+
+Each element should be bound by one `applyBindings` root. Nested roots bound to different stores would bind the inner elements twice.
 
 ---
 
 ## Components
 
-Components attach JavaScript behavior to DOM elements. They are defined by a CSS selector and a factory function.
+Components attach JavaScript behavior to DOM elements. They are defined by a CSS selector and a factory function. A component has no template, props or children of its own: it receives the matched element and wires it up, usually with stores, bindings and effects.
 
 ### Registering a Component
 
@@ -522,6 +528,7 @@ App.component('[data-counter]', (el) => {
   const store = App.getStore('counter')
   const button = el.querySelector('button')
 
+  const unbind = App.bind(el, store)
   const increment = () => store.state.count++
   button.addEventListener('click', increment)
 
@@ -529,177 +536,138 @@ App.component('[data-counter]', (el) => {
   return {
     cleanup() {
       button.removeEventListener('click', increment)
+      unbind()
     },
   }
 })
 ```
 
-The factory receives the matched `HTMLElement` and runs once per element. It can optionally return `{ cleanup }`.
-
-`App.component()` is chainable:
+The factory runs once per matched element and can optionally return `{ cleanup }`. `App.component()` is chainable:
 
 ```js
 App
   .component('[data-counter]', counterFactory)
   .component('[data-modal]',   modalFactory)
-  .component('[data-tabs]',    tabsFactory)
 ```
 
----
-
-### Component Lifecycle
+### Lifecycle
 
 ```
 App.start() / App.mount(el)
         │
         ▼
-   factory(el) called
+   factory(el) called (once per element)
         │
         ▼
-   instance stored internally (WeakMap — no DOM pollution)
+   instance stored in the registry (WeakMap keyed by element)
         │
         ▼
-   App.destroy(el) called
+   App.destroy(el) / App.destroySubtree(el)
         │
         ▼
-   instance.cleanup() called
-        │
-        ▼
-   instance removed from registry
+   instance.cleanup() called, instance forgotten
 ```
 
-Ion stores component instances in a `WeakMap` keyed by element. This means:
-
-- No `el.__cleanup` properties attached to DOM nodes
-- No conflicts with third-party libraries
-- Garbage collector automatically cleans up when elements are removed
-
----
-
-### Initializing the App
-
-After registering all stores and components, call `App.start()` once:
-
-```js
-const counter = App.store('counter', { count: 0 })
-const user    = App.store('user',    { name: 'Ana' })
-
-App.component('[data-counter]', counterFactory)
-App.component('[data-user]',    userFactory)
-
-// Scans the entire document and mounts all registered components
-App.start()
-```
-
----
-
-### Dynamic Mount
-
-For content injected into the DOM after `App.start()` (e.g., HTMX responses, modal content):
-
-```js
-// Insert dynamic content
-const section = document.createElement('section')
-section.innerHTML = serverResponse
-document.body.appendChild(section)
-
-// Mount only the new subtree — already-mounted components are unaffected
-App.mount(section)
-```
-
----
-
-### Destroying Components
-
-```js
-// Destroy a single component
-App.destroy(document.querySelector('[data-counter]'))
-
-// Destroy all components in a subtree (useful when removing DOM sections)
-App.destroySubtree(document.querySelector('#modal'))
-```
-
-`destroySubtree` walks the entire subtree and calls `cleanup()` on every mounted component it finds.
+- `App.start()` mounts every registered component found in the document. Call it once after registering components.
+- `App.mount(root)` mounts components inside content added later (HTMX responses, modals…).
+- Removing an element from the DOM does **not** call its `cleanup`. Call `App.destroy(el)` or `App.destroySubtree(el)` before removing it.
+- Each element is mounted at most once per registry. Registries created with `createComponentRegistry()` are independent of each other.
 
 ---
 
 ## Reactivity Primitives
 
-Ion exposes two low-level primitives for advanced use cases.
-
 ### effect
 
-`effect` runs a callback immediately and re-runs it automatically whenever any reactive state it reads changes. Dependencies are **tracked automatically** — you do not declare them.
+`effect` runs a callback immediately and re-runs it whenever any reactive state it read changes. Dependencies are **tracked automatically** on every run, so they can change from one run to the next.
 
 ```js
 const store = App.store('page', { title: 'Home', visits: 0 })
 
 const stop = App.effect(() => {
-  // This reads store.state.title — it becomes a dependency automatically
   document.title = store.state.title
-})
+}, { label: 'page-title' })
 
 store.state.title = 'About'
-// → document.title === 'About' (effect re-ran)
+// → document.title === 'About' (next microtask)
 
 store.state.visits++
-// → effect does NOT re-run (visits was never read inside the effect)
+// → effect does NOT re-run (visits was never read)
 
-// Permanently disable the effect
 stop()
 ```
 
-The callback may return a cleanup function, which Ion calls before each re-run and on final stop:
+The callback may return a cleanup function, which Ion calls before each re-run and when the effect is stopped. Stopping an effect also cancels a re-run that was already queued.
 
-```js
-App.effect(() => {
-  const handler = () => console.log(store.state.count)
-  window.addEventListener('focus', handler)
-
-  return () => {
-    window.removeEventListener('focus', handler)
-  }
-})
-```
+An effect never re-triggers itself: writing a key it also reads (`count++`) does not schedule it again. The optional `label` is shown by inspectors and in loop-detection errors.
 
 ---
 
 ### batch
 
-`batch` groups multiple state mutations into a single notification cycle. Useful when updating several properties that should appear as a single atomic change.
+`batch` changes **when** notifications run, not how many: reactions triggered inside it are collected and run synchronously, once each, when the outermost `batch` returns.
 
 ```js
-const store = App.store('form', {
-  firstName: '',
-  lastName: '',
-  email: '',
-})
+const store = App.store('form', { firstName: '', lastName: '' })
 
-// Without batch: 3 separate notification cycles → 3 DOM updates
+// Without batch: every reaction that depends on these keys runs once,
+// in the next microtask.
 store.state.firstName = 'Ana'
 store.state.lastName  = 'Lima'
-store.state.email     = 'ana@example.com'
 
-// With batch: 1 notification cycle → 1 DOM update
+// With batch: the same reactions run once each, synchronously,
+// before batch() returns — the DOM is up to date on the next line.
 App.batch(() => {
   store.state.firstName = 'Ana'
   store.state.lastName  = 'Lima'
-  store.state.email     = 'ana@example.com'
 })
 ```
 
 `batch` calls are **nestable**. Notifications flush only when the outermost `batch` completes.
 
+---
+
+### The scheduler
+
+Outside `batch`, reactions are queued in a `Set` and flushed in a microtask, so a reaction runs at most once per flush however many of its dependencies changed. Reactions queued while a flush is running are handled by the same flush in a new round.
+
+- **Errors** thrown by a reaction are reported (`reportError` in browsers, `console.error` elsewhere) and do not stop the other reactions in the flush.
+- **Loop detection:** if updates are still re-triggering each other after 100 rounds, Ion stops the flush and reports an error naming the reactions involved, instead of hanging the page.
+
+---
+
+## Inspector
+
+`setInspector` installs an observer of Ion's internals, for devtools, tests and visualizations. When no inspector is installed each call site is skipped by a single null check.
+
 ```js
-App.batch(() => {
-  store.state.a = 1
-  App.batch(() => {
-    store.state.b = 2  // still inside outer batch
-  })
-  store.state.c = 3
+import { setInspector } from '@matheusmntt/ion'
+
+const stop = setInspector({
+  commit: (e) => console.log('write', e.path.join('.'), e.prev, '→', e.next),
+  enqueue: (e) => console.log('queued', e.reaction.label, e.deduped ? '(already queued)' : ''),
+  domWrite: (e) => console.log(e.reaction.label, e.applied ? 'wrote' : 'skipped', e.next),
 })
-// → single flush here
+
+// later
+stop()
 ```
+
+| Event | When |
+|---|---|
+| `storeCreate(store)` | A store was created (`id`, `name`) |
+| `reactionCreate(reaction)` / `reactionDispose(reaction)` | A binding, effect, computed, subscriber or watcher was created / stopped |
+| `commit(e)` | A write changed state (`storeId`, `path`, `prev`, `next`, `op`), before anything is notified |
+| `writeSkipped(e)` | A write assigned the value the key already held |
+| `track(e)` | A reaction read a key and now depends on it |
+| `invalidate(reaction)` | A computed was marked dirty |
+| `enqueue(e)` | A reaction was queued in the `microtask` or `batch` lane (`deduped` if it was already waiting) |
+| `flushStart(e)` / `flushEnd(e)` | A flush round started / ended |
+| `batchStart()` / `batchEnd()` | The outermost `batch` began / returned |
+| `runStart(reaction)` / `runEnd(reaction, error)` | A reaction ran |
+| `domWrite(e)` | A binding compared a value with the DOM (`applied: false` when the write was skipped) |
+
+Each reaction is described by a stable `ReactionInfo` (`id`, `kind`, `label`, and for bindings `directive`, `path`, `element` and `storeId`).
 
 ---
 
@@ -720,7 +688,7 @@ const TooltipPlugin = {
 App.use(TooltipPlugin)
 ```
 
-After installing, `data-tooltip` works anywhere in your HTML:
+After installing, `data-tooltip` works in any subtree bound with `App.bind`:
 
 ```html
 <button data-tooltip="Save your work">Save</button>
@@ -731,21 +699,15 @@ The binding handler signature:
 ```ts
 type BindingHandler = (
   el: HTMLElement,
-  expression: string,      // the raw attribute value
-  stores: Record<string, unknown>  // all registered stores
+  expression: string,               // the raw attribute value
+  stores: Record<string, unknown>,  // stores registered on App (empty when using applyBindings directly)
+  store: unknown                    // the store being bound
 ) => Cleanup | void
 ```
 
-If the handler returns a function, Ion calls it as cleanup when the element is removed from `applyBindings` scope.
+The handler runs once per element when it is bound. Use `store` with `effect` to make it reactive. If the handler returns a function, Ion calls it when the element is removed from the bound root or when the bindings are cleaned up.
 
 `App.use()` is idempotent — installing the same plugin twice is a no-op.
-
-```js
-App
-  .use(TooltipPlugin)
-  .use(LazyImagePlugin)
-  .use(AnimationPlugin)
-```
 
 ---
 
@@ -754,14 +716,8 @@ App
 Ion is written in TypeScript. State shapes are fully inferred.
 
 ```ts
-interface CartItem {
-  name: string
-  price: number
-  quantity: number
-}
-
 interface CartState {
-  items: CartItem[]
+  items: { name: string; price: number; quantity: number }[]
   coupon: string | null
   discount: number
 }
@@ -772,29 +728,14 @@ const cart = App.store<CartState>('cart', {
   discount: 0,
 })
 
-// Fully typed — IDE autocomplete works on store.state
 cart.state.items.push({ name: 'Coffee', price: 12.9, quantity: 1 })
 cart.state.discount = 0.15
 
-// watch callback value is typed as unknown by default
-// you can narrow it:
+// watch callback values are typed as unknown; narrow them:
 cart.watch('discount', (value) => {
   const pct = value as number
   console.log(`Discount: ${pct * 100}%`)
 })
-```
-
-Computed properties:
-
-```ts
-const store = createStore(
-  { price: 100, tax: 0.1 },
-  {
-    computed: {
-      total: (state): number => state.price * (1 + state.tax),
-    },
-  }
-)
 ```
 
 Plugin with typed binding:
@@ -816,14 +757,11 @@ const MyPlugin: Plugin = {
 
 ## Using Without a Bundler
 
-Ion ships a self-contained IIFE build. Load it with a `<script>` tag and everything is available under the `Ion` global.
+Ion ships a self-contained IIFE build. Load it with a `<script>` tag and everything is available under the `Ion` global (and `window.App`).
 
 ```html
 <!DOCTYPE html>
 <html>
-<head>
-  <title>My PHP App</title>
-</head>
 <body>
 
   <!-- Server-rendered content -->
@@ -832,7 +770,7 @@ Ion ships a self-contained IIFE build. Load it with a `<script>` tag and everyth
     <input data-model="name" type="text" placeholder="Your name">
   </div>
 
-  <script src="/vendor/ion/dist/ion.global.js"></script>
+  <script src="/vendor/ion/dist/index.global.js"></script>
   <script>
     const { App } = Ion
 
@@ -851,7 +789,7 @@ For `<script type="module">`:
 
 ```html
 <script type="module">
-  import { App } from '/vendor/ion/dist/ion.js'
+  import { App } from '/vendor/ion/dist/index.js'
 
   const store = App.store('counter', { count: 0 })
   // ...
@@ -866,10 +804,11 @@ For `<script type="module">`:
 index.ts
 └── src/
     ├── app.ts          AppCore singleton + public API
-    ├── store.ts        createStore — reactive state container
+    ├── store.ts        createStore — state, subscribers, computed, watch
     ├── bindings.ts     DOM binding directives + applyBindings
     ├── component.ts    Component registry + lifecycle management
-    ├── reactivity.ts   Proxy engine, scheduler, effect, batch
+    ├── reactivity.ts   Proxy engine, dependency tracking, scheduler, effect, batch
+    ├── inspector.ts    Optional devtools hook
     └── types.ts        TypeScript interfaces and type definitions
 ```
 
@@ -879,38 +818,36 @@ index.ts
 store.state.count = 1
         │
         ▼
-  deepReactive Proxy (set trap)
+  Proxy set trap ── same value? ──► stop
         │
-        ▼
-  notify(prop, value)
+        ├──► store-wide listeners (subscribe, onChange)
         │
-  ┌─────┴──────────────────────────────────┐
-  ▼                                        ▼
-subscribers                           watchers
-  │                                    (path diff)
-  └─────────────────┬──────────────────────┘
-                    ▼
-              queueNotification()
-                    │
-          ┌─────────┴─────────┐
-          │ inside batch?     │
-          ▼                   ▼
-    push to queue        schedule()
-                              │
-                              ▼
-                        queueMicrotask
-                              │
-                              ▼
-                    flush all callbacks
+        └──► reactions that read `count`
+               (bindings, effects, watchers; computeds are marked
+                dirty and pass the trigger on to their own readers)
+                         │
+               ┌─────────┴─────────┐
+               │ inside batch()?   │
+               ▼                   ▼
+         batch queue         microtask queue
+     (runs when batch       (Set: each reaction
+        returns)              once per flush)
+               └─────────┬─────────┘
+                         ▼
+                 reactions re-run
+                         │
+                         ▼
+          bindings compare with the DOM
+          and write only what changed
 ```
 
 Key design decisions:
 
 - **Proxy-based, no compilation.** Ion never parses your templates or transforms your code. Reactivity is pure runtime.
-- **WeakMap proxy cache.** The same raw object always returns the same proxy, so reference equality is preserved.
-- **Microtask batching.** Multiple synchronous mutations in a tick produce one flush. The scheduler deduplicates identical callbacks.
-- **Loop detection.** If a subscriber triggers mutations that re-trigger subscribers indefinitely, Ion throws after 100 nested flush cycles instead of hanging the browser.
-- **WeakMap component registry.** Component instances and cleanup functions are stored in WeakMaps, not as properties on DOM nodes. No conflicts, no leaks.
+- **Key-level dependency tracking.** Dependencies are recorded per (object, key) on every run, including `in`, `Object.keys` and array length.
+- **Per-store proxy cache.** The same raw object always returns the same proxy within a store, so reference equality is preserved.
+- **Deduplicated microtask flushes** with a round limit for loop detection.
+- **WeakMap component registry.** Component instances and cleanup functions are stored in WeakMaps owned by each registry, not as properties on DOM nodes.
 
 ---
 
@@ -922,10 +859,11 @@ Key design decisions:
 |---|---|---|
 | `store` | `(name, initialState, options?) → Store` | Creates and registers a named store |
 | `getStore` | `(name) → Store` | Retrieves a registered store by name |
+| `stores` | `Record<string, Store>` | All registered stores |
 | `component` | `(selector, factory) → this` | Registers a component factory |
-| `bind` | `(root, store) → Cleanup` | Applies bindings from a store to a DOM subtree |
-| `effect` | `(callback) → Cleanup` | Creates a self-tracking reactive effect |
-| `batch` | `(fn) → void` | Groups mutations into a single notification cycle |
+| `bind` | `(root, store) → Cleanup` | Applies bindings (including plugin bindings) to a DOM subtree |
+| `effect` | `(callback, options?) → Cleanup` | Creates a self-tracking reactive effect |
+| `batch` | `(fn) → void` | Runs `fn`, then flushes its notifications synchronously |
 | `use` | `(plugin) → this` | Installs a plugin |
 | `start` | `() → void` | Mounts all registered components in the document |
 | `mount` | `(root) → void` | Mounts components in a specific subtree |
@@ -938,9 +876,11 @@ Key design decisions:
 
 | Property/Method | Signature | Description |
 |---|---|---|
+| `id` | `number` | Unique id (reported to inspectors) |
+| `name` | `string \| null` | Name given by `App.store` or `options.name` |
 | `state` | `T` | The reactive state proxy |
-| `subscribe` | `(fn: (state) → void) → Cleanup` | Subscribe to any change |
-| `onChange` | `(fn: (prop, value, state) → void) → Cleanup` | Subscribe with full change details |
+| `subscribe` | `(fn: (state) → void) → Cleanup` | Store-wide, once per flush |
+| `onChange` | `(fn: (prop, value, state, path) → void) → Cleanup` | Every individual change |
 | `watch` | `(path, fn: (value, state) → void) → Cleanup` | Watch a specific path (dot-notation) |
 
 ---
@@ -953,7 +893,8 @@ Standalone store factory — not registered on `App`.
 createStore<T extends State>(
   initialState: T,
   options?: {
-    computed?: Record<string, (state: T) => unknown>
+    computed?: Record<string, ((state: T) => unknown) | { get: (state: T) => unknown }>
+    name?: string
   }
 ): Store<T>
 ```
@@ -967,33 +908,34 @@ createStore<T extends State>(
 | `data-bind` | `"path"` | Sets `textContent` |
 | `data-show` | `"path"` | Toggles `hidden` |
 | `data-model` | `"path"` | Two-way value binding (input, textarea, select) |
-| `data-attr` | `"path:attrName"` | Sets an HTML attribute |
+| `data-attr` | `"path:attrName"` | Sets or removes an HTML attribute |
 | `data-class` | `"path:className"` | Toggles a CSS class |
-| `data-for` | `"arrayPath"` | Renders a list; child with `data-for-item` is the template |
+| `data-for` | `"arrayPath"` | Renders a list; direct child with `data-for-item` is the template |
 
 ---
 
-### `applyBindings(root, store, customBindings?)`
+### `applyBindings(root, store, customBindings?, stores?)`
 
 ```ts
 applyBindings<T extends State>(
   root: HTMLElement,
   store: Store<T>,
-  customBindings?: Map<string, BindingHandler>
+  customBindings?: Map<string, BindingHandler>,
+  stores?: Record<string, Store<any>>
 ): Cleanup
 ```
 
-Scans `root` and its subtree, applies all matching directives, and sets up a `MutationObserver` for dynamically added elements. Returns a cleanup function that disconnects everything.
+Scans `root` and its subtree, applies all matching directives, and observes the subtree to bind added elements and release removed ones. Returns a cleanup function that disconnects everything.
 
 ---
 
-### `effect(callback)`
+### `effect(callback, options?)`
 
 ```ts
-effect(callback: () => void | (() => void)): Cleanup
+effect(callback: () => void | (() => void), options?: { label?: string }): Cleanup
 ```
 
-Runs `callback` immediately and re-runs it when any reactive property it reads changes. Returns a stop function.
+Runs `callback` immediately and re-runs it when any reactive property it read changes. Returns a stop function.
 
 ---
 
@@ -1003,7 +945,17 @@ Runs `callback` immediately and re-runs it when any reactive property it reads c
 batch(fn: () => void): void
 ```
 
-Executes `fn` synchronously, deferring all notifications until it returns. Nestable.
+Executes `fn` synchronously, collecting notifications until the outermost batch returns, then runs each queued reaction once. Nestable.
+
+---
+
+### `setInspector(inspector)`
+
+```ts
+setInspector(inspector: Inspector | null): () => void
+```
+
+Installs an inspector and returns a function that removes it. See [Inspector](#inspector).
 
 ---
 
@@ -1021,9 +973,23 @@ interface PluginContext {
 type BindingHandler = (
   el: HTMLElement,
   expression: string,
-  stores: Record<string, unknown>
+  stores: Record<string, unknown>,
+  store: unknown
 ) => Cleanup | void
 ```
+
+---
+
+## Development
+
+```bash
+npm install
+npm test          # vitest + happy-dom
+npm run typecheck
+npm run build
+```
+
+Releases are published to npm by GitHub Actions when a GitHub Release is created; the version comes from the release tag. See [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 

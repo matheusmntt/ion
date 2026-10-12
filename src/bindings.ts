@@ -1,4 +1,6 @@
 import { Store, createStore } from "./store"
+import { Reaction, toRaw } from "./reactivity"
+import { inspector, DomChannel } from "./inspector"
 import { State, Cleanup, BindingHandler } from "./types"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -16,6 +18,64 @@ function setPath(path: string, obj: any, value: unknown): void {
   if (target != null) target[last] = value
 }
 
+function splitDirective(expression: string): [path: string, name: string] {
+  const colonIdx = expression.lastIndexOf(":")
+  return [expression.slice(0, colonIdx).trim(), expression.slice(colonIdx + 1).trim()]
+}
+
+function once(fn: Cleanup): Cleanup {
+  let done = false
+  return () => {
+    if (done) return
+    done = true
+    fn()
+  }
+}
+
+/** Nodes created by Ion itself (data-for items). applyBindings' observer ignores them. */
+const ionCreated = new WeakSet<Node>()
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Binding reactions
+// Each directive is a reaction that tracks exactly the keys on its path, and
+// writes to the DOM only when the value it computed differs from the DOM's.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function bindingReaction<T extends State>(
+  el: HTMLElement,
+  store: Store<T>,
+  directive: string,
+  expression: string,
+  update: (reaction: Reaction) => void
+): Cleanup {
+  const reaction: Reaction = new Reaction(() => update(reaction), {
+    kind: "binding",
+    label: `data-${directive}="${expression}"`,
+    storeId: store.id,
+    directive,
+    path: expression,
+    element: el,
+  })
+  reaction.run()
+  return () => reaction.stop()
+}
+
+function writeDOM(
+  reaction: Reaction,
+  el: HTMLElement,
+  channel: DomChannel,
+  name: string | null,
+  prev: unknown,
+  next: unknown,
+  apply: () => void
+): void {
+  const applied = prev !== next
+  if (applied) apply()
+  if (inspector) {
+    inspector.domWrite?.({ reaction: reaction.info, element: el, channel, name, prev, next, applied })
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Built-in bindings
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,13 +90,13 @@ export function bindText<T extends State>(
 ): Cleanup {
   const expression = el.dataset.bind!
 
-  const update = () => {
+  return bindingReaction(el, store, "bind", expression, (reaction) => {
     const value = resolvePath(expression, store.state)
-    el.textContent = value ?? ""
-  }
-
-  update()
-  return store.subscribe(update)
+    const next = value == null ? "" : String(value)
+    writeDOM(reaction, el, "text", null, el.textContent, next, () => {
+      el.textContent = next
+    })
+  })
 }
 
 /**
@@ -49,13 +109,12 @@ export function bindShow<T extends State>(
 ): Cleanup {
   const expression = el.dataset.show!
 
-  const update = () => {
-    const result = resolvePath(expression, store.state)
-    el.hidden = !result
-  }
-
-  update()
-  return store.subscribe(update)
+  return bindingReaction(el, store, "show", expression, (reaction) => {
+    const next = !resolvePath(expression, store.state)
+    writeDOM(reaction, el, "hidden", null, el.hidden, next, () => {
+      el.hidden = next
+    })
+  })
 }
 
 /**
@@ -69,21 +128,16 @@ export function bindAttr<T extends State>(
   store: Store<T>
 ): Cleanup {
   const expression = el.dataset.attr!
-  const colonIdx = expression.lastIndexOf(":")
-  const path = expression.slice(0, colonIdx).trim()
-  const attrName = expression.slice(colonIdx + 1).trim()
+  const [path, attrName] = splitDirective(expression)
 
-  const update = () => {
+  return bindingReaction(el, store, "attr", expression, (reaction) => {
     const value = resolvePath(path, store.state)
-    if (value == null) {
-      el.removeAttribute(attrName)
-    } else {
-      el.setAttribute(attrName, String(value))
-    }
-  }
-
-  update()
-  return store.subscribe(update)
+    const next = value == null ? null : String(value)
+    writeDOM(reaction, el, "attr", attrName, el.getAttribute(attrName), next, () => {
+      if (next === null) el.removeAttribute(attrName)
+      else el.setAttribute(attrName, next)
+    })
+  })
 }
 
 /**
@@ -97,17 +151,14 @@ export function bindClass<T extends State>(
   store: Store<T>
 ): Cleanup {
   const expression = el.dataset.class!
-  const colonIdx = expression.lastIndexOf(":")
-  const path = expression.slice(0, colonIdx).trim()
-  const className = expression.slice(colonIdx + 1).trim()
+  const [path, className] = splitDirective(expression)
 
-  const update = () => {
-    const value = resolvePath(path, store.state)
-    el.classList.toggle(className, Boolean(value))
-  }
-
-  update()
-  return store.subscribe(update)
+  return bindingReaction(el, store, "class", expression, (reaction) => {
+    const next = Boolean(resolvePath(path, store.state))
+    writeDOM(reaction, el, "class", className, el.classList.contains(className), next, () => {
+      el.classList.toggle(className, next)
+    })
+  })
 }
 
 /**
@@ -125,36 +176,36 @@ export function bindModel<T extends State>(
   store: Store<T>
 ): Cleanup {
   const path = el.dataset.model!
+  const field = el as HTMLInputElement
   const isCheckbox =
     el instanceof HTMLInputElement && el.type === "checkbox"
 
-  const writeToDOM = () => {
-    const value = resolvePath(path, store.state)
-    if (isCheckbox) {
-      ;(el as HTMLInputElement).checked = Boolean(value)
-    } else {
-      ;(el as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value =
-        value ?? ""
-    }
-  }
-
   const writeToStore = () => {
-    const value = isCheckbox
-      ? (el as HTMLInputElement).checked
-      : (el as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value
-
-    setPath(path, store.state, value)
+    setPath(path, store.state, isCheckbox ? field.checked : field.value)
   }
 
   const eventName = el instanceof HTMLSelectElement ? "change" : "input"
   el.addEventListener(eventName, writeToStore)
 
-  writeToDOM()
-  const unsub = store.subscribe(writeToDOM)
+  const stop = bindingReaction(el, store, "model", path, (reaction) => {
+    const value = resolvePath(path, store.state)
+    if (isCheckbox) {
+      const next = Boolean(value)
+      writeDOM(reaction, el, "checked", null, field.checked, next, () => {
+        field.checked = next
+      })
+    } else {
+      // Skipping identical writes also keeps the caret where the user left it
+      const next = value == null ? "" : String(value)
+      writeDOM(reaction, el, "value", null, field.value, next, () => {
+        field.value = next
+      })
+    }
+  })
 
   return () => {
     el.removeEventListener(eventName, writeToStore)
-    unsub()
+    stop()
   }
 }
 
@@ -162,10 +213,9 @@ export function bindModel<T extends State>(
  * data-for="items"
  * Renders a list of child elements from an array in the store.
  *
- * The element must contain exactly one child template element.
- * Each array item is exposed to bindings inside the template via a child store.
- *
- * The template element should have data-for-item on it.
+ * The element must have exactly one direct child with data-for-item, used as
+ * the template. Each item is rendered with its own scoped store holding a
+ * shallow copy of the item plus `$index` (or `$value` for primitives).
  *
  * @example
  * <ul data-for="todos">
@@ -174,20 +224,24 @@ export function bindModel<T extends State>(
  *   </li>
  * </ul>
  *
- * Note: for complex lists prefer a component-based approach.
- * This binding is intentionally simple — it re-renders the full list on change.
+ * Lists are not keyed: the whole list re-renders when the array, its length or
+ * any item property it rendered changes. Writes made through an item's scoped
+ * store (e.g. data-model inside the template) do not reach the parent array.
  */
 export function bindFor<T extends State>(
   el: HTMLElement,
   store: Store<T>,
-  customBindings: Map<string, BindingHandler>
+  customBindings: Map<string, BindingHandler> = new Map(),
+  stores: Record<string, Store<any>> = {}
 ): Cleanup {
   const expression = el.dataset.for!
-  const template = el.querySelector<HTMLElement>("[data-for-item]")
+  const template = Array.from(el.children).find((child) =>
+    child.hasAttribute("data-for-item")
+  ) as HTMLElement | undefined
 
   if (!template) {
     console.warn(
-      `[data-for] Element with data-for="${expression}" has no child with [data-for-item].`
+      `[data-for] Element with data-for="${expression}" has no direct child with [data-for-item].`
     )
     return () => {}
   }
@@ -195,107 +249,162 @@ export function bindFor<T extends State>(
   el.removeChild(template)
 
   let itemCleanups: Cleanup[] = []
-
-  const render = () => {
-    // Clean up previous rendered items
-    itemCleanups.forEach((c) => c())
+  const clearItems = () => {
+    itemCleanups.forEach((cleanup) => cleanup())
     itemCleanups = []
-
-    // Clear rendered children (keep nothing that isn't the template)
-    while (el.firstChild) el.removeChild(el.firstChild)
-
-    const list = resolvePath(expression, store.state)
-    if (!Array.isArray(list)) return
-
-    list.forEach((item: any, index: number) => {
-      const node = template.cloneNode(true) as HTMLElement
-      node.removeAttribute("data-for-item")
-
-      // Create a scoped store for this item
-      const itemStore = createStore(
-        typeof item === "object" && item !== null
-          ? { ...item, $index: index }
-          : { $value: item, $index: index }
-      )
-
-      // Apply bindings to the cloned node
-      const cleanup = applyBindingsToNode(node, itemStore, customBindings)
-      itemCleanups.push(cleanup)
-
-      el.appendChild(node)
-    })
   }
 
-  render()
-  const unsub = store.subscribe(render)
+  const reaction = new Reaction(
+    () => {
+      clearItems()
+      while (el.firstChild) el.removeChild(el.firstChild)
+
+      const list = resolvePath(expression, store.state)
+      if (!Array.isArray(list)) return
+
+      list.forEach((item: unknown, index: number) => {
+        const node = template.cloneNode(true) as HTMLElement
+        node.removeAttribute("data-for-item")
+        ionCreated.add(node)
+
+        // Reading the item's keys here makes the list depend on them
+        const scope =
+          typeof item === "object" && item !== null
+            ? { ...copyItem(item as Record<string, unknown>), $index: index }
+            : { $value: item, $index: index }
+        const itemStore = createStore(scope, { name: `${expression}[${index}]` })
+
+        itemCleanups.push(bindTree(node, itemStore, customBindings, stores, null))
+        el.appendChild(node)
+      })
+    },
+    {
+      kind: "binding",
+      label: `data-for="${expression}"`,
+      storeId: store.id,
+      directive: "for",
+      path: expression,
+      element: el,
+    }
+  )
+
+  reaction.run()
 
   return () => {
-    unsub()
-    itemCleanups.forEach((c) => c())
+    reaction.stop()
+    clearItems()
   }
+}
+
+function copyItem(item: Record<string, unknown>): Record<string, unknown> {
+  const copy: Record<string, unknown> = {}
+  for (const key of Object.keys(item)) copy[key] = toRaw(item[key])
+  return copy
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Core binding application
 // ─────────────────────────────────────────────────────────────────────────────
 
-function applyBindingsToNode<T extends State>(
+function bindElement<T extends State>(
+  el: HTMLElement,
+  store: Store<T>,
+  customBindings: Map<string, BindingHandler>,
+  stores: Record<string, Store<any>>
+): Cleanup | null {
+  const dataset = el.dataset
+  const cleanups: Cleanup[] = []
+
+  if (dataset.bind !== undefined) cleanups.push(bindText(el, store))
+  if (dataset.show !== undefined) cleanups.push(bindShow(el, store))
+  if (dataset.model !== undefined) cleanups.push(bindModel(el, store))
+  if (dataset.attr !== undefined) cleanups.push(bindAttr(el, store))
+  if (dataset.class !== undefined) cleanups.push(bindClass(el, store))
+  if (dataset.for !== undefined) cleanups.push(bindFor(el, store, customBindings, stores))
+
+  // Custom bindings
+  customBindings.forEach((handler, attr) => {
+    const dataAttr = attr.startsWith("data-") ? attr : `data-${attr}`
+    const key = dataAttr.replace("data-", "")
+    const camel = key.replace(/-([a-z])/g, (_, c) => c.toUpperCase())
+    const value = (dataset as any)[camel]
+    if (value !== undefined) {
+      const cleanup = handler(el, value, stores, store)
+      if (cleanup) cleanups.push(cleanup)
+    }
+  })
+
+  if (cleanups.length === 0) return null
+  return once(() => cleanups.forEach((cleanup) => cleanup()))
+}
+
+/**
+ * Binds `root` and its descendants in document order. A data-for element owns
+ * its subtree (the template), so the walk does not descend into it.
+ */
+function bindTree<T extends State>(
   root: HTMLElement,
   store: Store<T>,
-  customBindings: Map<string, BindingHandler>
+  customBindings: Map<string, BindingHandler>,
+  stores: Record<string, Store<any>>,
+  registry: Map<Element, Cleanup> | null
 ): Cleanup {
-  const unsubs: Cleanup[] = []
+  const cleanups: Cleanup[] = []
 
-  // Process built-ins
-  const candidates = [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))]
-
-  for (const el of candidates) {
-    if (el.dataset.bind !== undefined) unsubs.push(bindText(el, store))
-    if (el.dataset.show !== undefined) unsubs.push(bindShow(el, store))
-    if (el.dataset.model !== undefined) unsubs.push(bindModel(el, store))
-    if (el.dataset.attr !== undefined) unsubs.push(bindAttr(el, store))
-    if (el.dataset.class !== undefined) unsubs.push(bindClass(el, store))
-    if (el.dataset.for !== undefined) {
-      unsubs.push(bindFor(el, store, customBindings))
-    }
-
-    // Custom bindings
-    customBindings.forEach((handler, attr) => {
-      const dataAttr = attr.startsWith("data-") ? attr : `data-${attr}`
-      const key = dataAttr.replace("data-", "")
-      const camel = key.replace(/-([a-z])/g, (_, c) => c.toUpperCase())
-      const value = (el.dataset as any)[camel]
-      if (value !== undefined) {
-        const cleanup = handler(el, value, {})
-        if (cleanup) unsubs.push(cleanup)
+  const visit = (el: HTMLElement) => {
+    if (!el.dataset) return
+    if (!registry?.has(el)) {
+      const cleanup = bindElement(el, store, customBindings, stores)
+      if (cleanup) {
+        cleanups.push(cleanup)
+        registry?.set(el, cleanup)
       }
-    })
+    }
+    if (el.dataset.for !== undefined) return
+    for (const child of Array.from(el.children)) visit(child as HTMLElement)
   }
 
-  return () => unsubs.forEach((u) => u())
+  visit(root)
+  return () => cleanups.forEach((cleanup) => cleanup())
 }
 
 /**
  * Applies all built-in and custom bindings to a root element and its subtree.
- * Observes the DOM for dynamically added elements via MutationObserver.
- * Returns a full cleanup function.
+ * Observes the DOM so that elements added later are bound and elements removed
+ * later are released. Returns a full cleanup function.
  */
 export function applyBindings<T extends State>(
   root: HTMLElement,
   store: Store<T>,
-  customBindings: Map<string, BindingHandler> = new Map()
+  customBindings: Map<string, BindingHandler> = new Map(),
+  stores: Record<string, Store<any>> = {}
 ): Cleanup {
-  const unsubs: Cleanup[] = []
+  const bound = new Map<Element, Cleanup>()
 
   // Apply to existing DOM
-  unsubs.push(applyBindingsToNode(root, store, customBindings))
+  bindTree(root, store, customBindings, stores, bound)
 
-  // Watch for dynamically added nodes
+  const release = (node: Element) => {
+    for (const el of [node, ...Array.from(node.querySelectorAll("*"))]) {
+      const cleanup = bound.get(el)
+      if (cleanup) {
+        cleanup()
+        bound.delete(el)
+      }
+    }
+  }
+
   const observer = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
+      mutation.removedNodes.forEach((node) => {
+        // Nodes that were only moved inside root keep their bindings
+        if (node.nodeType !== Node.ELEMENT_NODE || root.contains(node)) return
+        release(node as Element)
+      })
       mutation.addedNodes.forEach((node) => {
-        if (!(node instanceof HTMLElement)) return
-        unsubs.push(applyBindingsToNode(node, store, customBindings))
+        if (node.nodeType !== Node.ELEMENT_NODE || ionCreated.has(node)) return
+        if (!root.contains(node)) return
+        bindTree(node as HTMLElement, store, customBindings, stores, bound)
       })
     })
   })
@@ -304,6 +413,7 @@ export function applyBindings<T extends State>(
 
   return () => {
     observer.disconnect()
-    unsubs.forEach((u) => u())
+    bound.forEach((cleanup) => cleanup())
+    bound.clear()
   }
 }

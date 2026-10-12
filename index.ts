@@ -16,6 +16,23 @@ export type { Store, StoreOptions, ComputedDefinition } from "./src/store"
 // ─────────────────────────────────────────────────────────────────────────────
 
 export { effect, batch, deepReactive, schedule, toRaw } from "./src/reactivity"
+export type { EffectOptions } from "./src/reactivity"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inspector (devtools hook)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export { setInspector } from "./src/inspector"
+export type {
+  Inspector,
+  ReactionInfo,
+  ReactionKind,
+  StoreInfo,
+  DomChannel,
+  DomWriteEvent,
+  CommitEvent,
+  Lane,
+} from "./src/inspector"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bindings
@@ -23,6 +40,7 @@ export { effect, batch, deepReactive, schedule, toRaw } from "./src/reactivity"
 
 export {
   applyBindings,
+  bindFor,
   bindText,
   bindShow,
   bindModel,
