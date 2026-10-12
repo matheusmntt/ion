@@ -16,7 +16,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           registry-url: https://registry.npmjs.org
           # setup-node already writes ~/.npmrc with NODE_AUTH_TOKEN — do NOT
           # write it again manually, or the two blocks will conflict
@@ -29,6 +29,9 @@ jobs:
       # Fail fast on type errors before spending time building
       - name: Type check
         run: npm run typecheck
+
+      - name: Test
+        run: npm test
 
       # Align package.json version with the GitHub release tag (e.g. v1.2.3)
       # The tag is available as github.ref_name on a release event
